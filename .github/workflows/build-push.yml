@@ -1,0 +1,42 @@
+name: Build and Push to ACR
+ 
+# Trigger the workflow on push to main branch or pull requests
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'appointment-service/**'  # Adjust path to your Node.js app
+      - '.github/workflows/build-push.yml'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'appointment-service/**'
+ 
+# Environment variables
+env:
+  REGISTRY_NAME: appointmentservice
+  REGISTRY_LOGIN_SERVER: appointmentservice.azurecr.io
+  IMAGE_NAME: appointment-service-dev
+  DOCKERFILE_PATH: appointment-service/Dockerfile
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+   
+    steps:
+    # Checkout the repository code
+    - name: Checkout code
+      uses: actions/checkout@v4
+ 
+    # Set up Node.js environment (optional - for testing before build)
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        cache: 'npm'
+        cache-dependency-path: appointment-service/package-lock.json
+ 
+    # Install dependencies and run tests (optional)
+    - name: Install dependencies
+      working-directory: appointment-service
+      run: |
+        npm ci
