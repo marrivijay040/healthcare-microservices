@@ -1,11 +1,10 @@
 name: Appointment Service - Deploy to AKS
- 
 on:
   workflow_run:
     workflows: ["Appointment Service CI/CD Pipeline"]
     types:
       - completed
-    branches: [main, develop]
+    branches: [main]
   workflow_dispatch:
     inputs:
       environment:
