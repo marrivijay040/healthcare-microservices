@@ -1,7 +1,8 @@
-name: Appointment Service - Deploy to AKS
+name: Patient Service - Deploy to AKS
+ 
 on:
   workflow_run:
-    workflows: ["Appointment Service CI/CD Pipeline"]
+    workflows: ["Patient Service CI/CD Pipeline"]
     types:
       - completed
     branches: [main]
@@ -21,10 +22,10 @@ on:
         type: string
  
 env:
-  REGISTRY_LOGIN_SERVER: appointmentservice.azurecr.io
-  IMAGE_NAME: appointment-service
-  AKS_CLUSTER_NAME: aks-dev-cluster-dev-s985
-  AKS_RESOURCE_GROUP: rg-aks-dev
+  REGISTRY_LOGIN_SERVER: patientservice.azurecr.io
+  IMAGE_NAME: patient-service
+  AKS_CLUSTER_NAME: healthcare-aks-cluster
+  AKS_RESOURCE_GROUP: healthcare-rg
   NAMESPACE: healthcare-services
  
 jobs:
@@ -41,9 +42,13 @@ jobs:
       uses: actions/checkout@v4
  
     - name: Azure Login
-      uses: azure/login@v1
+      uses: azure/login@v2
       with:
-        creds: ${{ secrets.AZURE_CREDENTIALS }}
+        client-id: ${{ secrets.AZURE_CLIENT_ID }}
+        tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+        subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      env:
+        AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
  
     - name: Set up kubectl
       uses: azure/setup-kubectl@v3
@@ -63,9 +68,184 @@ jobs:
  
     - name: Create ACR Secret
       run: |
-        kubectl create secret docker-registry acr-secret \
+        kubectl create secret docker-registry acr-secret-patient \
           --namespace=${{ env.NAMESPACE }} \
           --docker-server=${{ env.REGISTRY_LOGIN_SERVER }} \
-          --docker-username=appointmentservice \
-          --docker-password=${{ secrets.APPOINTMENT_ACR_PASSWORD }} \
+          --docker-username=patientservice \
+          --docker-password=${{ secrets.PATIENT_ACR_PASSWORD }} \
           --dry-run=client -o yaml | kubectl apply -f -
+ 
+    - name: Determine Image Tag
+      id: image-tag
+      run: |
+        if [ "${{ github.event_name }}" == "workflow_dispatch" ] && [ -n "${{ github.event.inputs.image_tag }}" ]; then
+          echo "tag=${{ github.event.inputs.image_tag }}" >> $GITHUB_OUTPUT
+        else
+          echo "tag=main-${{ github.sha }}" >> $GITHUB_OUTPUT
+        fi
+ 
+    - name: Update Image in Deployment Manifest
+      run: |
+        IMAGE_TAG="${{ steps.image-tag.outputs.tag }}"
+        IMAGE_FULL="${{ env.REGISTRY_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${IMAGE_TAG}"
+       
+        echo "Updating deployment manifest with image: $IMAGE_FULL"
+       
+        # Update the image in the deployment manifest
+        sed -i "s|image:.*|image: $IMAGE_FULL|g" AKS-Deployment/patient-deployment-dev.yml
+       
+        # Display the updated manifest for verification
+        echo "Updated deployment manifest:"
+        cat AKS-Deployment/patient-deployment-dev.yml
+ 
+    - name: Deploy to AKS Staging
+      run: |
+        echo "Deploying to AKS using existing manifests..."
+       
+        # Apply the deployment manifest
+        kubectl apply -f AKS-Deployment/patient-deployment-dev.yml
+       
+        # Apply the service manifest
+        kubectl apply -f AKS-Deployment/patient-service-dev.yml
+       
+        echo "Deployment manifests applied successfully!"
+ 
+    - name: Wait for Deployment
+      run: |
+        # Wait for deployment rollout (adjust deployment name based on your manifest)
+        kubectl rollout status deployment/patient-service \
+          --namespace=${{ env.NAMESPACE }} \
+          --timeout=300s
+ 
+    - name: Verify Deployment
+      run: |
+        echo "Deployment Status:"
+        kubectl get deployment patient-service -n ${{ env.NAMESPACE }}
+        echo ""
+        echo "Pod Status:"
+        kubectl get pods -l app=patient-service -n ${{ env.NAMESPACE }}
+        echo ""
+        echo "Service Status:"
+        kubectl get service patient-service -n ${{ env.NAMESPACE }}
+ 
+    - name: Staging Deployment Complete
+      run: |
+        echo "✅ STAGING DEPLOYMENT COMPLETED SUCCESSFULLY!"
+        echo "Service: Patient Service"
+        echo "Environment: Staging"
+        echo "Image: ${{ env.REGISTRY_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${{ steps.image-tag.outputs.tag }}"
+        echo "Namespace: ${{ env.NAMESPACE }}"
+ 
+  deploy-production:
+    name: Deploy to AKS Production
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'production'
+    environment: production
+    needs: []  # Remove staging dependency if you want independent production deployments
+   
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+ 
+    - name: Azure Login
+      uses: azure/login@v2
+      with:
+        client-id: ${{ secrets.AZURE_CLIENT_ID }}
+        tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+        subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      env:
+        AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+ 
+    - name: Set up kubectl
+      uses: azure/setup-kubectl@v3
+      with:
+        version: 'latest'
+ 
+    - name: Get AKS Credentials
+      run: |
+        az aks get-credentials \
+          --resource-group ${{ env.AKS_RESOURCE_GROUP }} \
+          --name ${{ env.AKS_CLUSTER_NAME }} \
+          --overwrite-existing
+ 
+    - name: Create Namespace if not exists
+      run: |
+        kubectl create namespace ${{ env.NAMESPACE }} --dry-run=client -o yaml | kubectl apply -f -
+ 
+    - name: Create ACR Secret
+      run: |
+        kubectl create secret docker-registry acr-secret-patient \
+          --namespace=${{ env.NAMESPACE }} \
+          --docker-server=${{ env.REGISTRY_LOGIN_SERVER }} \
+          --docker-username=patientservice \
+          --docker-password=${{ secrets.PATIENT_ACR_PASSWORD }} \
+          --dry-run=client -o yaml | kubectl apply -f -
+ 
+    - name: Determine Image Tag
+      id: image-tag
+      run: |
+        if [ -n "${{ github.event.inputs.image_tag }}" ]; then
+          echo "tag=${{ github.event.inputs.image_tag }}" >> $GITHUB_OUTPUT
+        else
+          echo "tag=latest" >> $GITHUB_OUTPUT
+        fi
+ 
+    - name: Update Image in Production Deployment Manifest
+      run: |
+        IMAGE_TAG="${{ steps.image-tag.outputs.tag }}"
+        IMAGE_FULL="${{ env.REGISTRY_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${IMAGE_TAG}"
+       
+        echo "Updating production deployment manifest with image: $IMAGE_FULL"
+       
+        # Copy dev manifest to prod and update for production settings
+        cp AKS-Deployment/patient-deployment-dev.yml AKS-Deployment/patient-deployment-prod.yml
+        cp AKS-Deployment/patient-service-dev.yml AKS-Deployment/patient-service-prod.yml
+       
+        # Update the image in the deployment manifest
+        sed -i "s|image:.*|image: $IMAGE_FULL|g" AKS-Deployment/patient-deployment-prod.yml
+       
+        # Update replicas for production (optional)
+        sed -i "s|replicas:.*|replicas: 3|g" AKS-Deployment/patient-deployment-prod.yml
+       
+        # Update environment variables for production (if needed)
+        sed -i "s|NODE_ENV.*|NODE_ENV: production|g" AKS-Deployment/patient-deployment-prod.yml
+       
+        echo "Updated production deployment manifest:"
+        cat AKS-Deployment/patient-deployment-prod.yml
+ 
+    - name: Deploy to AKS Production
+      run: |
+        echo "Deploying to AKS Production using updated manifests..."
+       
+        # Apply the production deployment manifest
+        kubectl apply -f AKS-Deployment/patient-deployment-prod.yml
+       
+        # Apply the production service manifest
+        kubectl apply -f AKS-Deployment/patient-service-prod.yml
+       
+        echo "Production deployment manifests applied successfully!"
+ 
+    - name: Wait for Deployment
+      run: |
+        kubectl rollout status deployment/patient-service \
+          --namespace=${{ env.NAMESPACE }} \
+          --timeout=600s
+ 
+    - name: Verify Deployment
+      run: |
+        echo "Deployment Status:"
+        kubectl get deployment patient-service -n ${{ env.NAMESPACE }}
+        echo ""
+        echo "Pod Status:"
+        kubectl get pods -l app=patient-service -n ${{ env.NAMESPACE }}
+        echo ""
+        echo "Service Status:"
+        kubectl get service patient-service -n ${{ env.NAMESPACE }}
+ 
+    - name: Production Deployment Complete
+      run: |
+        echo "✅ PRODUCTION DEPLOYMENT COMPLETED SUCCESSFULLY!"
+        echo "Service: Patient Service"
+        echo "Environment: Production"
+        echo "Image: ${{ env.REGISTRY_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:${{ steps.image-tag.outputs.tag }}"
+        echo "Namespace: ${{ env.NAMESPACE }}"
