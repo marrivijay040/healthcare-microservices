@@ -1,0 +1,139 @@
+name: Appointment Service CI/CD Pipeline
+ 
+on:
+  push:
+    branches: [ main ]
+   #paths:
+   #   - 'patient-service/**'
+  pull_request:
+    branches: [ main ]
+   # paths:
+   #  - 'patient-service/**'
+ 
+env:
+  REGISTRY_LOGIN_SERVER: appointmentservice.azurecr.io
+  IMAGE_NAME: patient-service
+ 
+jobs:
+ 
+  build:
+    name: Build Application
+    runs-on: ubuntu-latest
+    outputs:
+      image-digest: ${{ steps.build.outputs.digest }}
+      image-tags: ${{ steps.meta.outputs.tags }}
+   
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+ 
+    - name: Setup Node.js Environment
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        cache: 'npm'
+        cache-dependency-path: patient-service/package-lock.json
+ 
+    - name: Install Dependencies
+      working-directory: patient-service
+      run: |
+        echo "Installing npm dependencies..."
+        npm ci
+        echo "Dependencies installed successfully"
+ 
+    #- name: Run Tests
+     # working-directory: patient-service
+      #run: |
+       # echo "Running application tests..."
+        #npm test --if-present
+        #echo "Tests completed"
+ 
+    - name: Setup Docker Buildx
+      uses: docker/setup-buildx-action@v3
+ 
+    - name: Login to Azure Container Registry
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ env.REGISTRY_LOGIN_SERVER }}
+        username: appointmentservice
+        password: ${{ secrets.APPOINTMENT_ACR_PASSWORD }}
+ 
+    - name: Extract Image Metadata
+      id: meta
+      uses: docker/metadata-action@v5
+      with:
+        images: ${{ env.REGISTRY_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}
+        tags: |
+          type=ref,event=branch
+          type=ref,event=pr
+          type=sha,prefix={{branch}}-
+          type=raw,value=latest,enable={{is_default_branch}}
+ 
+    - name: Build Docker Image
+      id: build
+      uses: docker/build-push-action@v5
+      with:
+        context: patient-service
+        file: patient-service/Dockerfile
+        push: false
+        tags: ${{ steps.meta.outputs.tags }}
+        labels: ${{ steps.meta.outputs.labels }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+        outputs: type=docker,dest=/tmp/appointment-image.tar
+ 
+    - name: Upload Build Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: appointment-docker-image
+        path: /tmp/appointment-image.tar
+        retention-days: 1
+ 
+    - name: Build Stage Complete
+      run: |
+        echo "BUILD STAGE COMPLETED SUCCESSFULLY!"
+        echo "Image built: ${{ env.REGISTRY_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}"
+        echo "Tags: ${{ steps.meta.outputs.tags }}"
+  push:
+    name: Push to Registry
+    runs-on: ubuntu-latest
+    needs: build
+    if: github.event_name == 'push'
+   
+    steps:
+    - name: Setup Docker Buildx
+      uses: docker/setup-buildx-action@v3
+ 
+    - name: Download Build Artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: appointment-docker-image
+        path: /tmp
+ 
+    - name: Login to Azure Container Registry
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ env.REGISTRY_LOGIN_SERVER }}
+        username: appointmentservice
+        password: ${{ secrets.APPOINTMENT_ACR_PASSWORD }}
+    - name: Load and Push Docker Image
+      run: |
+        echo "Loading Docker image from artifact..."
+        docker load --input /tmp/appointment-image.tar
+        echo "Pushing image to Azure Container Registry..."
+        docker image ls
+       
+        for tag in $(echo '${{ needs.build.outputs.image-tags }}' | tr ' ' '\n'); do
+          echo "Pushing: $tag"
+          docker push "$tag"
+        done
+       
+        echo "All images pushed successfully!"
+ 
+    - name: Pipeline Complete
+      run: |
+        echo "DEPLOYMENT PIPELINE COMPLETED SUCCESSFULLY!"
+        echo "Service: Appointment Service"
+        echo "Registry: ${{ env.REGISTRY_LOGIN_SERVER }}"
+        echo "Images pushed:"
+        echo '${{ needs.build.outputs.image-tags }}' | tr ' ' '\n' | sed 's/^/  - /'
