@@ -1,1 +1,71 @@
-
+name: Appointment Service - Deploy to AKS
+on:
+  workflow_run:
+    workflows: ["Appointment Service CI/CD Pipeline"]
+    types:
+      - completed
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy to'
+        required: true
+        default: 'staging'
+        type: choice
+        options:
+        - staging
+        - production
+      image_tag:
+        description: 'Image tag to deploy (optional - uses latest if empty)'
+        required: false
+        type: string
+ 
+env:
+  REGISTRY_LOGIN_SERVER: appointmentservice.azurecr.io
+  IMAGE_NAME: appointment-service
+  AKS_CLUSTER_NAME: aks-dev-cluster-dev-s985
+  AKS_RESOURCE_GROUP: rg-aks-dev
+  NAMESPACE: healthcare-services
+ 
+jobs:
+  deploy-staging:
+    name: Deploy to AKS Staging
+    runs-on: ubuntu-latest
+    if: |
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success') ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'staging')
+    environment: staging
+   
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+ 
+    - name: Azure Login
+      uses: azure/login@v1
+      with:
+        creds: ${{ secrets.AZURE_CREDENTIALS }}
+ 
+    - name: Set up kubectl
+      uses: azure/setup-kubectl@v3
+      with:
+        version: 'latest'
+ 
+    - name: Get AKS Credentials
+      run: |
+        az aks get-credentials \
+          --resource-group ${{ env.AKS_RESOURCE_GROUP }} \
+          --name ${{ env.AKS_CLUSTER_NAME }} \
+          --overwrite-existing
+ 
+    - name: Create Namespace if not exists
+      run: |
+        kubectl create namespace ${{ env.NAMESPACE }} --dry-run=client -o yaml | kubectl apply -f -
+ 
+    - name: Create ACR Secret
+      run: |
+        kubectl create secret docker-registry acr-secret \
+          --namespace=${{ env.NAMESPACE }} \
+          --docker-server=${{ env.REGISTRY_LOGIN_SERVER }} \
+          --docker-username=appointmentservice \
+          --docker-password=${{ secrets.APPOINTMENT_ACR_PASSWORD }} \
+          --dry-run=client -o yaml | kubectl apply -f -
