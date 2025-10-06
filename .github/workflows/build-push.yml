@@ -3,12 +3,12 @@ name: Appointment Service CI/CD Pipeline
 on:
   push:
     branches: [ main ]
-    paths:
-      - 'appointment-service/**'
+   #paths:
+   #   - 'appointment-service/**'
   pull_request:
     branches: [ main ]
-    paths:
-      - 'appointment-service/**'
+   # paths:
+   #  - 'appointment-service/**'
  
 env:
   REGISTRY_LOGIN_SERVER: appointmentservice.azurecr.io
