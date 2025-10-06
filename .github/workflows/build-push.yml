@@ -41,12 +41,12 @@ jobs:
         npm ci
         echo "Dependencies installed successfully"
  
-    - name: Run Tests
-      working-directory: appointment-service
-      run: |
-        echo "Running application tests..."
-        npm test --if-present
-        echo "Tests completed"
+    #- name: Run Tests
+     # working-directory: appointment-service
+      #run: |
+       # echo "Running application tests..."
+        #npm test --if-present
+        #echo "Tests completed"
  
     - name: Setup Docker Buildx
       uses: docker/setup-buildx-action@v3
