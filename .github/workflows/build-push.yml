@@ -1,53 +1,64 @@
-name: Build and Push to ACR
+name: Appointment Service CI/CD Pipeline
  
-# Trigger the workflow on push to main branch or pull requests
 on:
   push:
     branches: [ main ]
     paths:
-      - 'appointment-service/**'  # Adjust path to your Node.js app
-      - '.github/workflows/build-push.yml'
+      - 'appointment-service/**'
   pull_request:
     branches: [ main ]
     paths:
       - 'appointment-service/**'
  
-# Environment variables
 env:
-  REGISTRY_NAME: appointmentservice
   REGISTRY_LOGIN_SERVER: appointmentservice.azurecr.io
-  IMAGE_NAME: appointment-service-dev
-  DOCKERFILE_PATH: appointment-service/Dockerfile
+  IMAGE_NAME: appointment-service
+ 
 jobs:
-  build-and-push:
+ 
+  build:
+    name: Build Application
     runs-on: ubuntu-latest
+    outputs:
+      image-digest: ${{ steps.build.outputs.digest }}
+      image-tags: ${{ steps.meta.outputs.tags }}
    
     steps:
-    # Checkout the repository code
-    - name: Checkout code
+    - name: Checkout Repository
       uses: actions/checkout@v4
  
-    # Set up Node.js environment (optional - for testing before build)
-    - name: Setup Node.js
+    - name: Setup Node.js Environment
       uses: actions/setup-node@v4
       with:
         node-version: '18'
         cache: 'npm'
         cache-dependency-path: appointment-service/package-lock.json
  
-    # Install dependencies and run tests (optional)
-    - name: Install dependencies
+    - name: Install Dependencies
       working-directory: appointment-service
       run: |
+        echo "Installing npm dependencies..."
         npm ci
-    - name: Login to ACR
+        echo "Dependencies installed successfully"
+ 
+    - name: Run Tests
+      working-directory: appointment-service
+      run: |
+        echo "Running application tests..."
+        npm test --if-present
+        echo "Tests completed"
+ 
+    - name: Setup Docker Buildx
+      uses: docker/setup-buildx-action@v3
+ 
+    - name: Login to Azure Container Registry
       uses: docker/login-action@v3
       with:
         registry: ${{ env.REGISTRY_LOGIN_SERVER }}
         username: appointmentservice
         password: ${{ secrets.APPOINTMENT_ACR_PASSWORD }}
  
-    - name: Extract metadata
+    - name: Extract Image Metadata
       id: meta
       uses: docker/metadata-action@v5
       with:
@@ -57,3 +68,30 @@ jobs:
           type=ref,event=pr
           type=sha,prefix={{branch}}-
           type=raw,value=latest,enable={{is_default_branch}}
+ 
+    - name: Build Docker Image
+      id: build
+      uses: docker/build-push-action@v5
+      with:
+        context: appointment-service
+        file: appointment-service/Dockerfile
+        push: false
+        tags: ${{ steps.meta.outputs.tags }}
+        labels: ${{ steps.meta.outputs.labels }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+        outputs: type=docker,dest=/tmp/appointment-image.tar
+ 
+    - name: Upload Build Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: appointment-docker-image
+        path: /tmp/appointment-image.tar
+        retention-days: 1
+ 
+    - name: Build Stage Complete
+      run: |
+        echo "BUILD STAGE COMPLETED SUCCESSFULLY!"
+        echo "Image built: ${{ env.REGISTRY_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}"
+        echo "Tags: ${{ steps.meta.outputs.tags }}"
+ 
