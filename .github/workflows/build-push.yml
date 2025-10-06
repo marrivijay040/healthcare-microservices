@@ -116,3 +116,24 @@ jobs:
         registry: ${{ env.REGISTRY_LOGIN_SERVER }}
         username: appointmentservice
         password: ${{ secrets.APPOINTMENT_ACR_PASSWORD }}
+    - name: Load and Push Docker Image
+      run: |
+        echo "Loading Docker image from artifact..."
+        docker load --input /tmp/appointment-image.tar
+        echo "Pushing image to Azure Container Registry..."
+        docker image ls
+       
+        for tag in $(echo '${{ needs.build.outputs.image-tags }}' | tr ' ' '\n'); do
+          echo "Pushing: $tag"
+          docker push "$tag"
+        done
+       
+        echo "All images pushed successfully!"
+ 
+    - name: Pipeline Complete
+      run: |
+        echo "DEPLOYMENT PIPELINE COMPLETED SUCCESSFULLY!"
+        echo "Service: Appointment Service"
+        echo "Registry: ${{ env.REGISTRY_LOGIN_SERVER }}"
+        echo "Images pushed:"
+        echo '${{ needs.build.outputs.image-tags }}' | tr ' ' '\n' | sed 's/^/  - /'
